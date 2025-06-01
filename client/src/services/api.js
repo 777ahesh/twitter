@@ -33,12 +33,20 @@ export const generateTweet = async (topic, model, options = {}) => {
     try {
         console.log('API Call - Topic:', topic, 'Model:', model, 'Options:', options);
         
-        const response = await axios.post(`${API_URL}/api/tweets/generate`, { 
+        // Prepare the request data
+        const requestData = { 
             topic, 
             model,
             forceThread: options.forceThread,
             forceSingle: options.forceSingle
-        });
+        };
+
+        // Add image data if present
+        if (options.imageData) {
+            requestData.imageData = options.imageData;
+        }
+
+        const response = await axios.post(`${API_URL}/api/tweets/generate`, requestData);
         
         const data = response.data;
         console.log('Raw API response:', data);

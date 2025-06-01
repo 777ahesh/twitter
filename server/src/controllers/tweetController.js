@@ -7,7 +7,7 @@ const twitterService = require('../services/twitterService');
 const generateTweet = async (req, res) => {
     try {
         console.log('Request body:', req.body);
-        const { topic, model, forceThread, forceSingle } = req.body;
+        const { topic, model, forceThread, forceSingle, imageData } = req.body;
         
         if (!topic || typeof topic !== 'string' || topic.trim() === '') {
             return res.status(400).json({ error: 'Topic is required and must be a non-empty string' });
@@ -15,14 +15,21 @@ const generateTweet = async (req, res) => {
         
         console.log('Generating tweet for topic:', topic, 'with model:', model || 'default');
         console.log('Thread preferences - forceThread:', forceThread, 'forceSingle:', forceSingle);
+        console.log('Image data:', imageData);
         
-        // Create options object for thread preferences
+        // Create options object for thread preferences and additional data
         const options = {
             forceThread: forceThread === true,
-            forceSingle: forceSingle === true
+            forceSingle: forceSingle === true,
+            imageData: imageData || null
         };
         
         const result = await huggingFaceService.generateTweet(topic.trim(), model, options);
+        
+        // Add image data to result if provided
+        if (imageData) {
+            result.imageData = imageData;
+        }
         
         console.log('Generated result:', result);
         res.json(result);
@@ -47,7 +54,7 @@ const getModels = async (req, res) => {
 const postTweet = async (req, res) => {
     try {
         console.log('Post request body:', req.body);
-        const { tweets, accessToken, isThread } = req.body;
+        const { tweets, accessToken, isThread, imageData } = req.body;
         
         if (!tweets || !Array.isArray(tweets) || tweets.length === 0) {
             return res.status(400).json({ error: 'Tweets array is required and cannot be empty' });
@@ -69,13 +76,18 @@ const postTweet = async (req, res) => {
         
         let responses = [];
         
+        // Handle image data for posting
+        const postOptions = {
+            imageData: imageData || null
+        };
+        
         if (isThread && tweets.length > 1) {
             console.log(`Posting thread with ${tweets.length} tweets`);
-            responses = await twitterService.postThread(tweets, accessToken);
+            responses = await twitterService.postThread(tweets, accessToken, postOptions);
             console.log('Thread posted successfully');
         } else {
             console.log('Posting single tweet');
-            const response = await twitterService.postTweet(tweets[0], accessToken);
+            const response = await twitterService.postTweet(tweets[0], accessToken, postOptions);
             responses = [response];
             console.log('Single tweet posted successfully');
         }
@@ -86,7 +98,8 @@ const postTweet = async (req, res) => {
             isThread: isThread && tweets.length > 1,
             message: isThread && tweets.length > 1 ? 
                 `Thread with ${tweets.length} tweets posted successfully` : 
-                'Tweet posted successfully'
+                'Tweet posted successfully',
+            imagePosted: !!imageData
         });
     } catch (error) {
         console.error('Error in postTweet:', error);
