@@ -8,7 +8,7 @@ const ModelSelector = ({ selectedModel, onModelChange }) => {
 
     const fetchModels = useCallback(async () => {
         try {
-            const response = await fetch('http://localhost:5000/api/tweets/models');
+            const response = await fetch('https://twitter-gmy4.onrender.com/api/tweets/models');
             const data = await response.json();
             setModels(data.models);
             

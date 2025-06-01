@@ -36,7 +36,7 @@ const handleCallback = async (req, res) => {
         
         // In production, store tokens securely (database, encrypted cookies, etc.)
         // For demo purposes, we'll redirect to frontend with tokens
-        res.redirect(`http://localhost:3000?accessToken=${accessToken}&refreshToken=${refreshToken}`);
+        res.redirect(`https://twitter-client-otl9.onrender.com?accessToken=${accessToken}&refreshToken=${refreshToken}`);
         
     } catch (error) {
         res.status(500).json({ error: 'Authentication failed: ' + error.message });
