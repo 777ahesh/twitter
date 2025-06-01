@@ -22,101 +22,125 @@ class TwitterService {
         return { url, codeVerifier, state };
     }
 
-    // Exchange authorization code for access token
+    // Get access token from authorization code
     async getAccessToken(code, codeVerifier) {
+        const { accessToken, refreshToken } = await this.client.loginWithOAuth2({
+            code,
+            codeVerifier,
+            redirectUri: process.env.TWITTER_REDIRECT_URI
+        });
+
+        return { accessToken, refreshToken };
+    }
+
+    // Upload media using v1.1 (this is allowed with OAuth 2.0)
+    async uploadMedia(imageData, accessToken) {
         try {
-            const { accessToken, refreshToken } = await this.client.loginWithOAuth2({
-                code,
-                codeVerifier,
-                redirectUri: process.env.TWITTER_REDIRECT_URI,
-            });
-            
-            return { accessToken, refreshToken };
+            if (!imageData) return null;
+
+            const client = new TwitterApi(accessToken);
+            let mediaId;
+
+            if (imageData.type === 'url') {
+                // Download image from URL
+                const response = await axios.get(imageData.source, { responseType: 'arraybuffer' });
+                const buffer = Buffer.from(response.data);
+                const contentType = response.headers['content-type'] || 'image/jpeg';
+                
+                mediaId = await client.v1.uploadMedia(buffer, { mimeType: contentType });
+            } else if (imageData.type === 'upload' && imageData.file) {
+                // Handle uploaded file
+                const buffer = imageData.file.buffer;
+                const mimeType = imageData.file.mimetype || 'image/jpeg';
+                
+                mediaId = await client.v1.uploadMedia(buffer, { mimeType });
+            }
+
+            console.log('Media uploaded successfully, ID:', mediaId);
+            return mediaId;
         } catch (error) {
-            throw new Error('Failed to get access token: ' + error.message);
+            console.error('Error uploading media:', error);
+            throw new Error(`Failed to upload media: ${error.message}`);
         }
     }
 
-    // Helper to upload image and get media_id
-    async uploadImage(twitterClient, imageData) {
-        // imageData can be a base64 string or a URL
-        let imageBuffer;
-        if (imageData.startsWith('http')) {
-            // Download image from URL
-            const response = await axios.get(imageData, { responseType: 'arraybuffer' });
-            imageBuffer = Buffer.from(response.data, 'binary');
-        } else if (imageData.startsWith('data:')) {
-            // Base64 data URI
-            const base64 = imageData.split(',')[1];
-            imageBuffer = Buffer.from(base64, 'base64');
-        } else {
-            throw new Error('Unsupported image format');
-        }
-        // Upload to Twitter
-        const mediaId = await twitterClient.v1.uploadMedia(imageBuffer, { type: 'png' }); // or 'jpg'
-        return mediaId;
-    }
-
-    // Post single tweet using access token
-    async postTweet(tweetContent, accessToken, options = {}) {
+    // Post single tweet using v2 API (this is what you need to change)
+    async postTweet(text, accessToken, options = {}) {
         try {
-            const twitterClient = new TwitterApi(accessToken);
-            let mediaIds = [];
+            const client = new TwitterApi(accessToken);
+            
+            // Prepare tweet options for v2 API
+            const tweetOptions = { text };
+            
+            // Upload media first if provided
             if (options.imageData) {
-                const mediaId = await this.uploadImage(twitterClient, options.imageData);
-                mediaIds.push(mediaId);
+                const mediaId = await this.uploadMedia(options.imageData, accessToken);
+                if (mediaId) {
+                    tweetOptions.media = { media_ids: [mediaId] };
+                }
             }
-            const params = { status: tweetContent };
-            if (mediaIds.length) {
-                params.media_ids = mediaIds;
-            }
-            // v1.1 endpoint for media
-            const response = await twitterClient.v1.tweet(params.status, { media_ids: mediaIds });
+            
+            console.log('Posting tweet with options:', tweetOptions);
+            
+            // Use v2 API instead of v1.1
+            const response = await client.v2.tweet(tweetOptions);
+            
+            console.log('Tweet posted successfully:', response.data);
             return response;
         } catch (error) {
-            throw new Error('Error posting tweet: ' + error.message);
+            console.error('Error posting tweet:', error);
+            throw error;
         }
     }
 
-    // Post tweet thread using access token
+    // Post thread using v2 API (this is what you need to change)
     async postThread(tweets, accessToken, options = {}) {
         try {
-            const twitterClient = new TwitterApi(accessToken);
-            let inReplyToStatusId = null;
-            let responses = [];
-            for (let i = 0; i < tweets.length; i++) {
-                let mediaIds = [];
-                if (i === 0 && options.imageData) {
-                    const mediaId = await this.uploadImage(twitterClient, options.imageData);
-                    mediaIds.push(mediaId);
-                }
-                const params = { status: tweets[i] };
-                if (mediaIds.length) {
-                    params.media_ids = mediaIds;
-                }
-                if (inReplyToStatusId) {
-                    params.in_reply_to_status_id = inReplyToStatusId;
-                    params.auto_populate_reply_metadata = true;
-                }
-                const response = await twitterClient.v1.tweet(params.status, params);
-                inReplyToStatusId = response.id_str;
-                responses.push(response);
+            const client = new TwitterApi(accessToken);
+            const responses = [];
+            let previousTweetId = null;
+            
+            // Upload media first if provided (will be attached to first tweet only)
+            let mediaId = null;
+            if (options.imageData) {
+                mediaId = await this.uploadMedia(options.imageData, accessToken);
             }
+            
+            for (let i = 0; i < tweets.length; i++) {
+                const tweetOptions = { 
+                    text: tweets[i] 
+                };
+                
+                // Add media only to the first tweet
+                if (i === 0 && mediaId) {
+                    tweetOptions.media = { media_ids: [mediaId] };
+                }
+                
+                // Add reply reference for thread continuity (except first tweet)
+                if (previousTweetId) {
+                    tweetOptions.reply = { in_reply_to_tweet_id: previousTweetId };
+                }
+                
+                console.log(`Posting tweet ${i + 1}/${tweets.length} with options:`, tweetOptions);
+                
+                // Use v2 API instead of v1.1
+                const response = await client.v2.tweet(tweetOptions);
+                responses.push(response);
+                
+                previousTweetId = response.data.id;
+                console.log(`Tweet ${i + 1} posted successfully:`, response.data.id);
+                
+                // Add small delay between tweets to avoid rate limiting
+                if (i < tweets.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
+            
+            console.log(`Thread with ${tweets.length} tweets posted successfully`);
             return responses;
         } catch (error) {
-            throw new Error('Error posting thread: ' + error.message);
-        }
-    }
-
-    // Refresh access token using refresh token
-    async refreshAccessToken(refreshToken) {
-        try {
-            const { accessToken: newAccessToken, refreshToken: newRefreshToken } = 
-                await this.client.refreshOAuth2Token(refreshToken);
-            
-            return { accessToken: newAccessToken, refreshToken: newRefreshToken };
-        } catch (error) {
-            throw new Error('Failed to refresh token: ' + error.message);
+            console.error('Error posting thread:', error);
+            throw error;
         }
     }
 }
